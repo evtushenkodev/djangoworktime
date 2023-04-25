@@ -1,36 +1,58 @@
-from rest_framework import viewsets
-from rest_framework.decorators import action
+from rest_framework import mixins, viewsets
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Organization, User, Event
-from .serializers import OrganizationSerializer, UserSerializer, EventSerializer
+from .models import CustomUser, Event, Organization
+from .serializers import CustomUserSerializer, EventSerializer, OrganizationSerializer
 
 
-class OrganizationViewSet(viewsets.ModelViewSet):
+class CustomUserViewSet(mixins.CreateModelMixin,
+                        mixins.UpdateModelMixin,
+                        mixins.RetrieveModelMixin,
+                        mixins.ListModelMixin,
+                        viewsets.GenericViewSet):
+    queryset = CustomUser.objects.all()
+    serializer_class = CustomUserSerializer
+
+
+class OrganizationViewSet(mixins.CreateModelMixin,
+                          mixins.UpdateModelMixin,
+                          mixins.RetrieveModelMixin,
+                          mixins.ListModelMixin,
+                          viewsets.GenericViewSet):
     queryset = Organization.objects.all()
     serializer_class = OrganizationSerializer
+    permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
-        instance = serializer.save()
-        instance.generate_qr_code()
-
-
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
+        serializer.save(user=self.request.user)
 
 
 class EventViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.all()
     serializer_class = EventSerializer
+    permission_classes = [IsAuthenticated]
 
-    @action(detail=False, methods=['post'])
-    def create_from_qr(self, request):
-        qr_data = request.data.get('qr_data')
-        user = request.user
-        org_id, is_entry_str = qr_data.split('-')
-        is_entry = is_entry_str == 'entry'
-        organization = Organization.objects.get(id=int(org_id))
-        event = Event.objects.create(user=user, organization=organization, is_entry=is_entry)
-        serializer = self.serializer_class(event)
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        # Если указан параметр organization_id, возвращаем события для конкретной организации
+        organization_id = self.request.query_params.get('organization_id')
+        if organization_id:
+            queryset = queryset.filter(user=user, organization_id=organization_id)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
         return Response(serializer.data)

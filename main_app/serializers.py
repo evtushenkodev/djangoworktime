@@ -1,7 +1,6 @@
-from rest_framework import serializers, viewsets
-from rest_framework.response import Response
+from rest_framework import serializers
 
-from .models import Organization, User, Event
+from .models import CustomUser, Organization, Event
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -10,44 +9,34 @@ class OrganizationSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'qrcode']
 
 
-class UserSerializer(serializers.ModelSerializer):
+class CustomUserSerializer(serializers.ModelSerializer):
+    organization = OrganizationSerializer()
+
     class Meta:
-        model = User
-        fields = ['id', 'firstname', 'lastname', 'organization', 'login', 'password']
+        model = CustomUser
+        fields = ['id', 'email', 'password', 'firstname', 'lastname', 'organization']
+        extra_kwargs = {'password': {'write_only': True}}
+
+    def create(self, validated_data):
+        org_data = validated_data.pop('organization')
+        org_name = org_data.get('name', None)
+        if org_name:
+            org = Organization.objects.get(name=org_name)
+        else:
+            raise serializers.ValidationError("Missing organization id")
+        user = CustomUser.objects.create(
+            firstname=validated_data['firstname'],
+            lastname=validated_data['lastname'],
+            email=validated_data['email'],
+            password=validated_data['password'],
+            organization=org
+        )
+        user.set_password(validated_data['password'])
+        user.save()
+        return user
 
 
 class EventSerializer(serializers.ModelSerializer):
     class Meta:
         model = Event
-        fields = ['id', 'user', 'organization', 'timestamp', 'is_entry']
-
-
-class OrganizationViewSet(viewsets.ModelViewSet):
-    queryset = Organization.objects.all()
-    serializer_class = OrganizationSerializer
-
-    def perform_create(self, serializer):
-        instance = serializer.save()
-        instance.generate_qr_code()
-
-
-class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-
-
-class EventViewSet(viewsets.ModelViewSet):
-    queryset = Event.objects.all()
-    serializer_class = EventSerializer
-
-    def create(self, request, *args, **kwargs):
-        qr_data = request.data['qr_data']
-        user_id = request.data['user_id']
-        user = User.objects.get(id=user_id)
-        org_id, is_entry_str = qr_data.split('-')
-        is_entry = is_entry_str == 'entry'
-        organization = Organization.objects.get(id=int(org_id))
-        event = Event(user=user, organization=organization, is_entry=is_entry)
-        event.save()
-        serializer = EventSerializer(event)
-        return Response(serializer.data)
+        fields = ['id', 'user', 'qr_data', 'timestamp', 'is_entry']
